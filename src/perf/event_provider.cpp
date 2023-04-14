@@ -25,6 +25,7 @@
 #include <lo2s/log.hpp>
 #include <lo2s/perf/event_description.hpp>
 #include <lo2s/perf/event_provider.hpp>
+#include <lo2s/perf/pfm.hpp>
 #include <lo2s/perf/util.hpp>
 #include <lo2s/topology.hpp>
 #include <lo2s/util.hpp>
