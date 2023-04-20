@@ -75,15 +75,11 @@ public:
         EventDescription ev =
             EventDescription(ev_desc, (perf_type_id)attr.type, attr.config, attr.config1);
 
-        ev.availability = Availability::UNIVERSAL;
-
         return ev;
     }
 
-    std::vector<EventDescription> get_pfm4_events() const
+    void print_pfm4_events() const
     {
-        std::vector<EventDescription> events;
-
         pfm_pmu_info_t pinfo;
         pfm_event_info_t info;
 
@@ -110,7 +106,7 @@ public:
                 // the subevents
                 if (info.nattrs != 0)
                 {
-                    bool has_umask = false;
+                    std::vector<std::string> uevents;
                     for (int attr_id = 0; attr_id < info.nattrs; attr_id++)
                     {
                         pfm_event_attr_info_t attr_info;
@@ -123,23 +119,37 @@ public:
                         }
                         else
                         {
-                            has_umask = true;
                             EventDescription uevent = pfm4_read_event(
                                 fmt::format("{}:{}", full_event_name, attr_info.name));
-                            if (uevent.availability != Availability::UNAVAILABLE)
+                            if (uevent.is_valid())
                             {
-                                events.emplace_back(uevent);
+                                uevents.emplace_back(std::string(attr_info.name));
                             }
                         }
                     }
 
-                    if (!has_umask)
+                    if (!uevents.empty())
+                    {
+                        if (uevents.size() == 1)
+                        {
+                            std::cout << " " << full_event_name << ":" << uevents[0] << std::endl;
+                        }
+                        else
+                        {
+                            std::cout << " " << full_event_name << std::endl;
+                            for (auto& event : uevents)
+                            {
+                                std::cout << " \t- " << event << std::endl;
+                            }
+                        }
+                    }
+                    else
                     {
                         EventDescription event = pfm4_read_event(std::string(full_event_name));
 
-                        if (event.availability != Availability::UNAVAILABLE)
+                        if (event.is_valid())
                         {
-                            events.emplace_back(event);
+                            std::cout << " " << full_event_name << std::endl;
                         }
                     }
                 }
@@ -147,15 +157,13 @@ public:
                 {
                     EventDescription event = pfm4_read_event(std::string(full_event_name));
 
-                    if (event.availability != Availability::UNAVAILABLE)
+                    if (event.is_valid())
                     {
-                        events.emplace_back(event);
+                        std::cout << " " << full_event_name << std::endl;
                     }
                 }
             }
         }
-
-        return events;
     }
 
 private:

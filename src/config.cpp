@@ -192,6 +192,7 @@ void parse_program_options(int argc, const char** argv)
     general_options.toggle("list-clockids", "List all available clockids.");
 
     general_options.toggle("list-events", "List available metric and sampling events.");
+    general_options.toggle("list-pfm4-events", "List available events known to libpfm4");
     general_options.toggle("list-tracepoints", "List available kernel tracepoint events.");
 
     general_options.toggle("list-knobs", "List available x86_adapt CPU knobs.");
@@ -409,11 +410,17 @@ void parse_program_options(int argc, const char** argv)
                                perf::EventProvider::get_predefined_events());
             print_availability(std::cout, "Kernel PMU events",
                                perf::EventProvider::get_pmu_events());
-            print_availability(std::cout, "libpfm4 events",
-                               perf::PFM4::instance().get_pfm4_events());
+
             std::cout << "(* Only available in process-monitoring mode" << std::endl;
             std::cout << "(# Only available in system-monitoring mode" << std::endl;
 
+            std::exit(EXIT_SUCCESS);
+        }
+
+        if (arguments.given("list-pfm4-events"))
+        {
+            std::cout << "Available events according to libpfm4:" << std::endl;
+            perf::PFM4::instance().print_pfm4_events();
             std::exit(EXIT_SUCCESS);
         }
 
