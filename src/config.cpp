@@ -221,6 +221,8 @@ void parse_program_options(int argc, const char** argv)
         .metavar("NAME")
         .optional();
 
+    general_options.option("user", "Start COMMAND as this user").metavar("USER").optional();
+
     system_mode_options
         .toggle("all-cpus", "Start in system-monitoring mode for all CPUs. "
                             "Monitor as long as COMMAND is running or until PID exits.")
@@ -359,6 +361,11 @@ void parse_program_options(int argc, const char** argv)
     config.use_sensors = arguments.given("sensors");
     config.use_block_io = arguments.given("block-io");
     config.command = arguments.positionals();
+
+    if(arguments.provided("user"))
+      {
+    config.username = arguments.get("user");
+      }
 
     if (arguments.given("help"))
     {

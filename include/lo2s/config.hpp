@@ -92,6 +92,8 @@ struct Config
     // syscalls
     bool use_syscalls = false;
     std::vector<int64_t> syscall_filter;
+    // setuid
+    std::string username;
 };
 
 const Config& config();
