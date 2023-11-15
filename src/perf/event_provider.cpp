@@ -25,6 +25,7 @@
 #include <lo2s/log.hpp>
 #include <lo2s/perf/event_description.hpp>
 #include <lo2s/perf/event_provider.hpp>
+#include <lo2s/perf/pfm.hpp>
 #include <lo2s/perf/util.hpp>
 #include <lo2s/topology.hpp>
 #include <lo2s/util.hpp>
@@ -156,7 +157,7 @@ namespace perf
 
 const EventDescription sysfs_read_event(const std::string& ev_desc);
 
-static bool event_is_openable(EventDescription& ev)
+bool event_is_openable(EventDescription& ev)
 {
     struct perf_event_attr attr;
     memset(&attr, 0, sizeof(attr));
@@ -618,8 +619,14 @@ EventDescription EventProvider::cache_event(const std::string& name)
     }
     catch (const InvalidEvent& e)
     {
-        event_map_.emplace(name, DescriptionCache::make_invalid());
-        throw e;
+        EventDescription ev = PFM4::instance().pfm4_read_event(name);
+        if (ev.availability == Availability::UNAVAILABLE)
+        {
+            event_map_.emplace(name, DescriptionCache::make_invalid());
+            throw e;
+        }
+
+        return ev;
     }
 }
 
