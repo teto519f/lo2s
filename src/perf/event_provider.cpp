@@ -25,7 +25,9 @@
 #include <lo2s/log.hpp>
 #include <lo2s/perf/event_description.hpp>
 #include <lo2s/perf/event_provider.hpp>
+#ifdef HAVE_LIBPFM
 #include <lo2s/perf/pfm.hpp>
+#endif
 #include <lo2s/perf/util.hpp>
 #include <lo2s/topology.hpp>
 #include <lo2s/util.hpp>
@@ -619,6 +621,7 @@ EventDescription EventProvider::cache_event(const std::string& name)
     }
     catch (const InvalidEvent& e)
     {
+#ifdef HAVE_LIBPFM
         EventDescription ev = PFM4::instance().pfm4_read_event(name);
         if (ev.availability == Availability::UNAVAILABLE)
         {
@@ -627,6 +630,10 @@ EventDescription EventProvider::cache_event(const std::string& name)
         }
 
         return ev;
+#else
+        event_map_.emplace(name, DescriptionCache::make_invalid());
+        throw e;
+#endif
     }
 }
 
