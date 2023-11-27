@@ -44,6 +44,7 @@ extern "C"
 #include <signal.h>
 #include <unistd.h>
 
+#include <pwd.h>
 #include <sys/prctl.h>
 #include <sys/ptrace.h>
 }
@@ -55,32 +56,57 @@ namespace monitor
 
 [[noreturn]] static void run_command(const std::vector<std::string>& command_and_args)
 {
-    /* kill yourself if the parent dies */
-    prctl(PR_SET_PDEATHSIG, SIGHUP);
 
-
-    std::vector<char*> tmp;
-    std::transform(command_and_args.begin(), command_and_args.end(), std::back_inserter(tmp),
-                   [](const std::string& s)
-                   {
-                       char* pc = new char[s.size() + 1];
-                       std::strcpy(pc, s.c_str());
-                       return pc;
-                   });
-    tmp.push_back(nullptr);
-
-    Log::debug() << "Execute the command: " << nitro::lang::join(command_and_args);
-
-    // Stop yourself so the parent tracer can do initialize the options
-    raise(SIGSTOP);
-
-    // run the application which should be sampled
-    execvp(tmp[0], &tmp[0]);
-
-    // should not be executed -> exec failed, let's clean up anyway.
-    for (auto cp : tmp)
+  if(!config().username.empty())
     {
-        delete[] cp;
+
+  struct passwd *pw = getpwnam(config().username.c_str());
+
+  if(pw == NULL)
+    {
+      Log::error() << "Invalid username: " << config().username;
+      exit(-1);
+        }
+
+  if(setgid(pw->pw_gid) == -1)
+    {
+      Log::error() << "Couldn't change group ID, are you root?";
+      exit(-1);
+    }
+  setuid(pw->pw_uid);
+  setenv("HOME", pw->pw_dir, 1);
+  setenv("LOGNAME", pw->pw_name, 1);
+  setenv("USER", pw->pw_name, 1);
+    }
+
+  /* kill yourself if the parent dies */
+  prctl(PR_SET_PDEATHSIG, SIGHUP);
+
+  /* we need ptrace to get fork/clone/... */
+  ptrace(PTRACE_TRACEME, 0, NULL, NULL);
+
+  std::vector<char*> tmp;
+  std::transform(command_and_args.begin(), command_and_args.end(), std::back_inserter(tmp),
+                 [](const std::string& s)
+                 {
+                     char* pc = new char[s.size() + 1];
+                     std::strcpy(pc, s.c_str());
+                     return pc;
+                 });
+  tmp.push_back(nullptr);
+
+  Log::debug() << "Execute the command: " << nitro::lang::join(command_and_args);
+
+  // Stop yourself so the parent tracer can do initialize the options
+  raise(SIGSTOP);
+
+  // run the application which should be sampled
+  execvp(tmp[0], &tmp[0]);
+
+  // should not be executed -> exec failed, let's clean up anyway.
+  for (auto cp : tmp)
+  {
+      delete[] cp;
     }
     Log::error() << "Could not execute the command: " << nitro::lang::join(command_and_args);
     throw_errno();
