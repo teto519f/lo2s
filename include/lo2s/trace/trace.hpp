@@ -277,6 +277,11 @@ public:
                     ByProcess(groups_.get_process(scope.as_thread())))
                 .add_member(intern_location);
         }
+
+        // You can not have a location withouth a writer, so create one here. calling archive_ on
+        // the same location twice is harmless in case some requires a real writer later on
+        archive_(intern_location);
+
         return intern_location;
     }
 
