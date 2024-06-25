@@ -191,6 +191,7 @@ set(SOURCE_FILES
     src/perf/util.cpp
     src/syscalls.cpp
     src/summary.cpp
+    src/reader.cpp
 )
 
 # define lo2s target
