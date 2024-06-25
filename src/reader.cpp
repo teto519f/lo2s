@@ -76,23 +76,24 @@ private:
     EventType type_;
     EventDescription data_storage_;
     double scale_ = 1.0;
+    ExecutionScope scope_;
 
 public:
     PerfEvent(EventType type, ExecutionScope scope, bool enable_on_exec,
               std::optional<std::string> event)
-    : type_(type)
+    : type_(type), scope_(scope)
     {
         // set data_storage
         switch (type_)
         {
         case EventType::GROUP:
             data_storage_ =
-                (CounterProvider::instance().collection_for(MeasurementScope::group_metric(scope)))
+                (CounterProvider::instance().collection_for(MeasurementScope::group_metric(scope_)))
                     .leader;
             break;
         case EventType::USERSPACE:
             data_storage_ = (CounterProvider::instance().collection_for(
-                                 MeasurementScope::userspace_metric(scope)))
+                                 MeasurementScope::userspace_metric(scope_)))
                                 .leader;
             break;
         case EventType::SAMPLING:
@@ -142,6 +143,7 @@ public:
 
         case EventType::TIME:
             otf2::chrono::time_point local_time = otf2::chrono::genesis();
+            scope_ = ExecutionScope(Thread(0));
 
             attr_.sample_type = PERF_SAMPLE_TIME;
             attr_.exclude_kernel = 1;
@@ -241,6 +243,16 @@ public:
         return scale_;
     }
 
+    auto get_scope() const
+    {
+        return scope_;
+    }
+
+    perf_event_attr& get_attr()
+    {
+        return attr_;
+    }
+
     PerfEventInstance open(std::variant<Cpu, Thread> location);
 };
 
@@ -248,9 +260,117 @@ class PerfEventInstance
 {
 private:
     int fd_;
+    int other_fd_;
+    EventType type_;
     PerfEvent ev_;
 
 public:
+    PerfEventInstance(EventType type, PerfEvent ev) : type_(type), ev_(ev){};
+
+    template <class T>
+    T open(std::variant<Cpu, Thread> location)
+    {
+        switch (type_)
+        {
+        case EventType::GROUP:
+        {
+            fd_ = perf_try_event_open(&ev_.get_attr(), ev_.get_scope(), -1, 0, config().cgroup_fd);
+
+            if (fd_ < 0)
+            {
+                Log::error() << "perf_event_open for counter group leader failed";
+                throw; // TODO: do some template stuff so throw__errno() works
+            }
+            break;
+        }
+
+        case EventType::USERSPACE:
+        {
+            // Future me problem, userspace is weird
+            break;
+        }
+
+        case EventType::TIME:
+        {
+            fd_ = perf_event_open(&ev_.get_attr(), ev_.get_scope(), -1, 0);
+            if (fd_ == -1)
+            {
+                throw;
+            }
+
+            break;
+        }
+
+        case EventType::SAMPLING:
+        {
+            do
+            {
+                fd_ = perf_event_open(&ev_.get_attr(), ev_.get_scope(), -1, 0, config().cgroup_fd);
+
+                if (errno == EACCES && !ev_.get_attr().exclude_kernel && perf_event_paranoid() > 1)
+                {
+                    ev_.get_attr().exclude_kernel = 1;
+                    perf_warn_paranoid();
+                    continue;
+                }
+
+                /* reduce exactness of IP can help if the kernel does not support really exact
+                 * events */
+                if (ev_.get_attr().precise_ip == 0)
+                    break;
+                else
+                    ev_.get_attr().precise_ip--;
+            } while (fd_ <= 0);
+
+            if (fd_ < 0)
+            {
+                Log::error() << "perf_event_open for sampling failed";
+                if (ev_.get_attr().use_clockid)
+                {
+                    Log::error() << "maybe the specified clock is unavailable?";
+                }
+                throw;
+            }
+            Log::debug() << "Using precise_ip level: " << ev_.get_attr().precise_ip;
+            break;
+        }
+
+        case EventType::TRACEPOINT:
+        {
+            fd_ = perf_event_open(&ev_.get_attr(), ExecutionScope(location), -1, 0,
+                                  config().cgroup_fd);
+            if (fd_ < 0)
+            {
+                Log::error() << "perf_event_open for raw tracepoint failed.";
+                throw;
+            }
+            break;
+        }
+
+        case EventType::SYSCALL:
+        {
+            fd_ = perf_event_open(&ev_.get_attr(), ExecutionScope(location), -1, 0,
+                                  config().cgroup_fd);
+            if (fd_ < 0)
+            {
+                Log::error() << "perf_event_open for raw tracepoint failed.";
+                throw;
+            }
+
+            ev_.setSyscallEventFormat(true);
+            other_fd_ = perf_event_open(&ev_.get_attr(), ExecutionScope(location), -1, 0,
+                                        config().cgroup_fd);
+            if (other_fd_ < 0)
+            {
+                Log::error() << "perf_event_open for raw tracepoint failed.";
+                throw;
+                close(fd_);
+            }
+            break;
+        }
+        }
+    }
+
     template <class T>
     T read()
     {
