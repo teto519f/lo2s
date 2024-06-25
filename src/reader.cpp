@@ -335,20 +335,9 @@ public:
             break;
         }
 
-        case EventType::TRACEPOINT:
+        default:
         {
-            fd_ = perf_event_open(&ev_.get_attr(), ExecutionScope(location), -1, 0,
-                                  config().cgroup_fd);
-            if (fd_ < 0)
-            {
-                Log::error() << "perf_event_open for raw tracepoint failed.";
-                throw;
-            }
-            break;
-        }
-
-        case EventType::SYSCALL:
-        {
+            // works for TRACEPOINT and SYSCALL
             fd_ = perf_event_open(&ev_.get_attr(), ExecutionScope(location), -1, 0,
                                   config().cgroup_fd);
             if (fd_ < 0)
@@ -357,14 +346,17 @@ public:
                 throw;
             }
 
-            ev_.setSyscallEventFormat(true);
-            other_fd_ = perf_event_open(&ev_.get_attr(), ExecutionScope(location), -1, 0,
-                                        config().cgroup_fd);
-            if (other_fd_ < 0)
+            if (type_ == EventType::SYSCALL)
             {
-                Log::error() << "perf_event_open for raw tracepoint failed.";
-                throw;
-                close(fd_);
+                ev_.setSyscallEventFormat(true);
+                other_fd_ = perf_event_open(&ev_.get_attr(), ExecutionScope(location), -1, 0,
+                                            config().cgroup_fd);
+                if (other_fd_ < 0)
+                {
+                    Log::error() << "perf_event_open for raw tracepoint failed.";
+                    throw;
+                    close(fd_);
+                }
             }
             break;
         }
