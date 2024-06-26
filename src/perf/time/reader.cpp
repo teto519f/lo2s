@@ -58,7 +58,7 @@ Reader::Reader()
                                            "object, or the hardware breakpoint won't work.");
 
     counter::group::PerfEvent event(counter::group::EventType::TIME, ExecutionScope(Thread(0)), 0,
-                                    std::nullopt); // check enable_on_exec
+                                    std::nullopt);
 
     try
     {
