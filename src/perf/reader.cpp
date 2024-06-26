@@ -95,7 +95,14 @@ PerfEvent::PerfEvent(EventType type, std::variant<Cpu, Thread> location, bool en
     {
     case EventType::USERSPACE:
     {
-        // something
+        attr_.sample_period = 0;
+        // Needed when scaling multiplexed events, and recognize activation phases
+        attr_.read_format = PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING;
+
+#ifndef USE_HW_BREAKPOINT_COMPAT
+        attr_.use_clockid = config().use_clockid;
+        attr_.clockid = config().clockid;
+#endif
         break;
     }
 
@@ -214,26 +221,43 @@ PerfEventInstance PerfEvent::open()
 
 PerfEventInstance::PerfEventInstance(EventType type, PerfEvent ev) : type_(type), ev_(ev)
 {
-    if (type_ == EventType::SYSCALL || type_ == EventType::TRACEPOINT)
+    if (type_ == EventType::TIME)
     {
-        fd_ = perf_event_open(&ev_.get_attr(), ev_.get_scope(), -1, 0, config().cgroup_fd);
-        if (fd_ < 0)
+        fd_ = perf_event_open(&ev_.get_attr(), ev_.get_scope(), -1, 0);
+        if (fd_ == -1)
         {
-            Log::error() << "perf_event_open for raw tracepoint failed.";
             throw;
         }
     }
-    else if (type_ == EventType::GROUP || type_ == EventType::SAMPLING)
+    else
     {
-        fd_ = perf_try_event_open(&ev_.get_attr(), ev_.get_scope(), -1, 0, config().cgroup_fd);
+        fd_ = perf_event_open(&ev_.get_attr(), ev_.get_scope(), -1, 0, config().cgroup_fd);
 
         // error handling
+
         if (type_ == EventType::GROUP)
         {
             if (fd_ < 0)
             {
                 Log::error() << "perf_event_open for counter group leader failed";
                 throw; // TODO: do some template stuff so throw__errno() works
+            }
+        }
+        else if (type_ == EventType::SYSCALL || type_ == EventType::TRACEPOINT)
+        {
+
+            if (fd_ < 0)
+            {
+                Log::error() << "perf_event_open for raw tracepoint failed.";
+                throw;
+            }
+        }
+        else if (type_ == EventType::USERSPACE)
+        {
+            if (fd_ < 0)
+            {
+                Log::error() << "perf_event_open for counter failed";
+                throw;
             }
         }
         else if (type_ == EventType::SAMPLING)
@@ -247,15 +271,6 @@ PerfEventInstance::PerfEventInstance(EventType type, PerfEvent ev) : type_(type)
             // happen here
         }
     }
-    else if (type_ == EventType::TIME)
-    {
-        fd_ = perf_event_open(&ev_.get_attr(), ev_.get_scope(), -1, 0);
-        if (fd_ == -1)
-        {
-            throw;
-        }
-    }
-    // TODO: add USERSPACE to this... future me problem
 }
 
 } // namespace group
