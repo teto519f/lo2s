@@ -19,6 +19,7 @@
  * along with lo2s.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <lo2s/perf/reader.hpp>
 #include <lo2s/perf/time/reader.hpp>
 
 #include <lo2s/log.hpp>
@@ -55,35 +56,15 @@ Reader::Reader()
 {
     static_assert(sizeof(local_time) == 8, "The local time object must not be a big fat "
                                            "object, or the hardware breakpoint won't work.");
-    struct perf_event_attr attr = common_perf_event_attrs();
 
-    attr.sample_type = PERF_SAMPLE_TIME;
-    attr.exclude_kernel = 1;
-
-#ifndef USE_HW_BREAKPOINT_COMPAT
-    attr.type = PERF_TYPE_BREAKPOINT;
-    attr.bp_type = HW_BREAKPOINT_W;
-    attr.bp_addr = (uint64_t)(&local_time);
-    attr.bp_len = HW_BREAKPOINT_LEN_8;
-    attr.wakeup_events = 1;
-    attr.sample_period = 1;
-#else
-    attr.type = PERF_TYPE_HARDWARE;
-    attr.config = PERF_COUNT_HW_INSTRUCTIONS;
-    attr.sample_period = 100000000;
-    attr.task = 1;
-#endif
+    counter::group::PerfEvent event(counter::group::EventType::TIME, ExecutionScope(Thread(0)), 0,
+                                    std::nullopt); // check enable_on_exec
 
     try
     {
-        fd_ = perf_event_open(&attr, ExecutionScope(Thread(0)), -1, 0);
-        if (fd_ == -1)
-        {
-            throw_errno();
-        }
+        counter::group::PerfEventInstance ev_instance = event.open();
 
         init_mmap(fd_);
-
         if (ioctl(fd_, PERF_EVENT_IOC_ENABLE) == -1)
         {
             throw_errno();

@@ -24,6 +24,7 @@
 #include <lo2s/config.hpp>
 #include <lo2s/log.hpp>
 #include <lo2s/perf/event_reader.hpp>
+#include <lo2s/perf/reader.hpp>
 #include <lo2s/perf/tracepoint/format.hpp>
 #include <lo2s/perf/util.hpp>
 #include <lo2s/util.hpp>
@@ -68,27 +69,10 @@ public:
 
     Reader(Cpu cpu) : cpu_(cpu)
     {
-        struct perf_event_attr attr = common_perf_event_attrs();
-        attr.type = PERF_TYPE_TRACEPOINT;
-        attr.config = tracepoint::EventFormat("raw_syscalls:sys_enter").id();
-        attr.sample_period = 1;
-        attr.sample_type = PERF_SAMPLE_RAW | PERF_SAMPLE_TIME | PERF_SAMPLE_IDENTIFIER;
-
-        fd_ = perf_event_open(&attr, cpu.as_scope(), -1, 0, config().cgroup_fd);
-        if (fd_ < 0)
-        {
-            Log::error() << "perf_event_open for raw tracepoint failed.";
-            throw_errno();
-        }
-
-        attr.config = tracepoint::EventFormat("raw_syscalls:sys_exit").id();
-        other_fd_ = perf_event_open(&attr, cpu.as_scope(), -1, 0, config().cgroup_fd);
-        if (other_fd_ < 0)
-        {
-            Log::error() << "perf_event_open for raw tracepoint failed.";
-            throw_errno();
-            close(fd_);
-        }
+        counter::group::PerfEvent event(counter::group::EventType::SYSCALL, ExecutionScope(cpu_), 0,
+                                        std::nullopt); // check enable_on_exec
+        // produces two PerfEventInstance objects TODO
+        counter::group::PerfEventInstance ev_instance = event.open();
 
         try
         {

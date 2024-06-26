@@ -29,6 +29,8 @@
 #include <lo2s/perf/event_provider.hpp>
 #include <lo2s/perf/util.hpp>
 
+#include <lo2s/perf/reader.hpp>
+
 #include <cstring>
 
 extern "C"
@@ -53,38 +55,8 @@ Reader<T>::Reader(ExecutionScope scope, bool enable_on_exec)
       CounterProvider::instance().collection_for(MeasurementScope::group_metric(scope))),
   counter_buffer_(counter_collection_.counters.size() + 1)
 {
-    perf_event_attr leader_attr = common_perf_event_attrs();
-
-    leader_attr.type = counter_collection_.leader.type;
-    leader_attr.config = counter_collection_.leader.config;
-    leader_attr.config1 = counter_collection_.leader.config1;
-
-    leader_attr.sample_type = PERF_SAMPLE_TIME | PERF_SAMPLE_READ;
-    leader_attr.freq = config().metric_use_frequency;
-
-    if (leader_attr.freq)
-    {
-        Log::debug() << "counter::Reader: sample_freq: " << config().metric_frequency;
-
-        leader_attr.sample_freq = config().metric_frequency;
-    }
-    else
-    {
-        Log::debug() << "counter::Reader: sample_period: " << config().metric_count;
-        leader_attr.sample_period = config().metric_count;
-    }
-
-    leader_attr.exclude_kernel = config().exclude_kernel;
-    leader_attr.read_format =
-        PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING | PERF_FORMAT_GROUP;
-    leader_attr.enable_on_exec = enable_on_exec;
-
-    group_leader_fd_ = perf_try_event_open(&leader_attr, scope, -1, 0, config().cgroup_fd);
-    if (group_leader_fd_ < 0)
-    {
-        Log::error() << "perf_event_open for counter group leader failed";
-        throw_errno();
-    }
+    PerfEvent event(EventType::GROUP, scope, enable_on_exec, std::nullopt);
+    PerfEventInstance ev_instance = event.open();
 
     Log::debug() << "counter::Reader: leader event: '" << counter_collection_.leader.name << "'";
 
