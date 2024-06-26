@@ -270,74 +270,8 @@ public:
     template <class T>
     T open(std::variant<Cpu, Thread> location)
     {
-        switch (type_)
+        if (type_ == EventType::SYSCALL || type_ == EventType::TRACEPOINT)
         {
-        case EventType::GROUP:
-        {
-            fd_ = perf_try_event_open(&ev_.get_attr(), ev_.get_scope(), -1, 0, config().cgroup_fd);
-
-            if (fd_ < 0)
-            {
-                Log::error() << "perf_event_open for counter group leader failed";
-                throw; // TODO: do some template stuff so throw__errno() works
-            }
-            break;
-        }
-
-        case EventType::USERSPACE:
-        {
-            // Future me problem, userspace is weird
-            break;
-        }
-
-        case EventType::TIME:
-        {
-            fd_ = perf_event_open(&ev_.get_attr(), ev_.get_scope(), -1, 0);
-            if (fd_ == -1)
-            {
-                throw;
-            }
-
-            break;
-        }
-
-        case EventType::SAMPLING:
-        {
-            do
-            {
-                fd_ = perf_event_open(&ev_.get_attr(), ev_.get_scope(), -1, 0, config().cgroup_fd);
-
-                if (errno == EACCES && !ev_.get_attr().exclude_kernel && perf_event_paranoid() > 1)
-                {
-                    ev_.get_attr().exclude_kernel = 1;
-                    perf_warn_paranoid();
-                    continue;
-                }
-
-                /* reduce exactness of IP can help if the kernel does not support really exact
-                 * events */
-                if (ev_.get_attr().precise_ip == 0)
-                    break;
-                else
-                    ev_.get_attr().precise_ip--;
-            } while (fd_ <= 0);
-
-            if (fd_ < 0)
-            {
-                Log::error() << "perf_event_open for sampling failed";
-                if (ev_.get_attr().use_clockid)
-                {
-                    Log::error() << "maybe the specified clock is unavailable?";
-                }
-                throw;
-            }
-            Log::debug() << "Using precise_ip level: " << ev_.get_attr().precise_ip;
-            break;
-        }
-
-        default:
-        {
-            // works for TRACEPOINT and SYSCALL
             fd_ = perf_event_open(&ev_.get_attr(), ExecutionScope(location), -1, 0,
                                   config().cgroup_fd);
             if (fd_ < 0)
@@ -358,9 +292,64 @@ public:
                     close(fd_);
                 }
             }
-            break;
         }
+        else if (type_ == EventType::GROUP || type_ == EventType::SAMPLING)
+        {
+            fd_ = perf_try_event_open(&ev_.get_attr(), ev_.get_scope(), -1, 0, config().cgroup_fd);
+
+            // error handling
+            if (type_ == EventType::GROUP)
+            {
+                if (fd_ < 0 &&)
+                {
+                    Log::error() << "perf_event_open for counter group leader failed";
+                    throw; // TODO: do some template stuff so throw__errno() works
+                }
+            }
+            else if (type_ == EventType::SAMPLING)
+            {
+                if (errno == EACCES && !ev_.get_attr().exclude_kernel && perf_event_paranoid() > 1)
+                {
+                    ev_.get_attr().exclude_kernel = 1;
+                    perf_warn_paranoid();
+                    continue;
+                }
+
+                /* reduce exactness of IP can help if the kernel does not support really exact
+                 * events */
+                if (ev_.get_attr().precise_ip == 0)
+                {
+                    break;
+                }
+                else
+                {
+                    ev_.get_attr().precise_ip--;
+                }
+
+                while (fd_ <= 0)
+                    ;
+
+                if (fd_ < 0)
+                {
+                    Log::error() << "perf_event_open for sampling failed";
+                    if (ev_.get_attr().use_clockid)
+                    {
+                        Log::error() << "maybe the specified clock is unavailable?";
+                    }
+                    throw;
+                }
+                Log::debug() << "Using precise_ip level: " << ev_.get_attr().precise_ip;
+            }
         }
+        else if (type_ == EventType::TIME)
+        {
+            fd_ = perf_event_open(&ev_.get_attr(), ev_.get_scope(), -1, 0);
+            if (fd_ == -1)
+            {
+                throw;
+            }
+        }
+        // TODO: add USERSPACE to this... future me problem
     }
 
     template <class T>
