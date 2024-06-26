@@ -115,8 +115,7 @@ public:
 
     Reader(Cpu cpu, int event_id) : cpu_(cpu)
     {
-        counter::group::PerfEvent event(counter::group::EventType::TRACEPOINT, cpu_.as_scope(), 0,
-                                        event_id);
+        counter::group::PerfEvent event(counter::group::EventType::TRACEPOINT, cpu_, 0, event_id);
         counter::group::PerfEventInstance ev_instance = event.open();
 
         Log::debug() << "Opened perf_sample_tracepoint_reader for " << cpu_ << " with id "

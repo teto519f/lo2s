@@ -57,8 +57,7 @@ Reader::Reader()
     static_assert(sizeof(local_time) == 8, "The local time object must not be a big fat "
                                            "object, or the hardware breakpoint won't work.");
 
-    counter::group::PerfEvent event(counter::group::EventType::TIME, ExecutionScope(Thread(0)), 0,
-                                    std::nullopt);
+    counter::group::PerfEvent event(counter::group::EventType::TIME, Thread(0), 0, std::nullopt);
 
     try
     {

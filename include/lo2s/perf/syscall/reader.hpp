@@ -69,8 +69,7 @@ public:
 
     Reader(Cpu cpu) : cpu_(cpu)
     {
-        counter::group::PerfEvent event(counter::group::EventType::SYSCALL, ExecutionScope(cpu_), 0,
-                                        std::nullopt);
+        counter::group::PerfEvent event(counter::group::EventType::SYSCALL, cpu_, 0, std::nullopt);
         // produces two PerfEventInstance objects TODO
         counter::group::PerfEventInstance ev_instance = event.open();
 

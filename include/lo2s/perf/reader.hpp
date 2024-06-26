@@ -78,12 +78,14 @@ protected:
     EventType type_;
     EventDescription data_storage_;
     double scale_ = 1.0;
+
+    std::variant<Cpu, Thread> location_;
     ExecutionScope scope_;
 
 public:
     PerfEvent();
 
-    PerfEvent(EventType type, ExecutionScope scope, bool enable_on_exec,
+    PerfEvent(EventType type, std::variant<Cpu, Thread> location, bool enable_on_exec,
               std::optional<int> event_id);
 
     PerfEventInstance open();
@@ -93,7 +95,12 @@ public:
         return scale_;
     }
 
-    auto get_scope() const
+    std::variant<Cpu, Thread> get_location() const
+    {
+        return location_;
+    }
+
+    ExecutionScope get_scope() const
     {
         return scope_;
     }

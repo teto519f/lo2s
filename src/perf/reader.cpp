@@ -23,6 +23,11 @@
 
 #include <lo2s/perf/reader.hpp>
 
+extern "C"
+{
+#include <sys/ioctl.h>
+}
+
 namespace lo2s
 {
 namespace perf
@@ -31,6 +36,16 @@ namespace counter
 {
 namespace group
 {
+
+// helper for visit function
+template <class... Ts>
+struct overloaded : Ts...
+{
+    using Ts::operator()...;
+};
+template <class... Ts>
+overloaded(Ts...) -> overloaded<Ts...>;
+
 PerfEvent::PerfEvent()
 {
     memset(&attr_, 0, sizeof(attr_));
@@ -38,10 +53,15 @@ PerfEvent::PerfEvent()
     attr_.type = -1;
 }
 
-PerfEvent::PerfEvent(EventType type, ExecutionScope scope, bool enable_on_exec,
+PerfEvent::PerfEvent(EventType type, std::variant<Cpu, Thread> location, bool enable_on_exec,
                      std::optional<int> event_id)
-: type_(type), scope_(scope)
+: type_(type), location_(location)
 {
+    // can be deleted when scope gets replaced
+    std::visit(overloaded{ [&](Cpu cpu) { scope_ = cpu.as_scope(); },
+                           [&](Thread thread) { scope_ = thread.as_scope(); } },
+               location_);
+
     // set data_storage
     switch (type_)
     {
@@ -196,8 +216,7 @@ PerfEventInstance::PerfEventInstance(EventType type, PerfEvent ev) : type_(type)
 {
     if (type_ == EventType::SYSCALL || type_ == EventType::TRACEPOINT)
     {
-        fd_ = perf_event_open(&ev_.get_attr(), ExecutionScope(ev_.get_scope()), -1, 0,
-                              config().cgroup_fd);
+        fd_ = perf_event_open(&ev_.get_attr(), ev_.get_scope(), -1, 0, config().cgroup_fd);
         if (fd_ < 0)
         {
             Log::error() << "perf_event_open for raw tracepoint failed.";
