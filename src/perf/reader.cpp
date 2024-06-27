@@ -46,45 +46,15 @@ struct overloaded : Ts...
 template <class... Ts>
 overloaded(Ts...) -> overloaded<Ts...>;
 
-PerfEvent::PerfEvent()
+// configures perf_event_attr based on desc
+void PerfEvent::setup(bool enable_on_exec, std::optional<int> event_id)
 {
-    memset(&attr_, 0, sizeof(attr_));
-    attr_.size = sizeof(attr_);
-    attr_.type = -1;
-}
+    // if data_storage_ wasn't set it will contain the following values if not specified otherwise
+    // later on:
+    attr_.type = data_storage_.type;       //-1
+    attr_.config = data_storage_.config;   // 0
+    attr_.config1 = data_storage_.config1; // 0
 
-PerfEvent::PerfEvent(EventType type, std::variant<Cpu, Thread> location, bool enable_on_exec,
-                     std::optional<int> event_id)
-: type_(type), location_(location)
-{
-    // can be deleted when scope gets replaced
-    std::visit(overloaded{ [&](Cpu cpu) { scope_ = cpu.as_scope(); },
-                           [&](Thread thread) { scope_ = thread.as_scope(); } },
-               location_);
-
-    // set data_storage
-    switch (type_)
-    {
-    case EventType::GROUP:
-        data_storage_ =
-            (CounterProvider::instance().collection_for(MeasurementScope::group_metric(scope_)))
-                .leader;
-        break;
-    case EventType::USERSPACE:
-        data_storage_ =
-            (CounterProvider::instance().collection_for(MeasurementScope::userspace_metric(scope_)))
-                .leader;
-        break;
-    case EventType::SAMPLING:
-        data_storage_ = EventProvider::get_event_by_name(config().sampling_event);
-    default:
-        break;
-    }
-
-    // general attributes
-    attr_.type = data_storage_.type;
-    attr_.config = data_storage_.config;
-    attr_.config1 = data_storage_.config1;
     attr_.exclude_kernel = config().exclude_kernel;
     attr_.sample_period = 1;
     attr_.freq = config().metric_use_frequency;
@@ -111,6 +81,7 @@ PerfEvent::PerfEvent(EventType type, std::variant<Cpu, Thread> location, bool en
         attr_.sample_type = PERF_SAMPLE_TIME | PERF_SAMPLE_READ;
         attr_.freq = config().metric_use_frequency;
 
+        // TODO: check if comments will/should appear multiple times
         if (attr_.freq)
         {
             Log::debug() << "counter::Reader: sample_freq: " << config().metric_frequency;
@@ -191,10 +162,7 @@ PerfEvent::PerfEvent(EventType type, std::variant<Cpu, Thread> location, bool en
 
     case EventType::TRACEPOINT:
     {
-        if (!event_id.has_value())
-        {
-            throw; // do some error magic
-        }
+        assert(event_id.has_value());
 
         attr_.type = PERF_TYPE_TRACEPOINT;
         attr_.config = event_id.value();
@@ -206,60 +174,98 @@ PerfEvent::PerfEvent(EventType type, std::variant<Cpu, Thread> location, bool en
     {
         attr_.type = PERF_TYPE_TRACEPOINT;
         attr_.sample_type = PERF_SAMPLE_RAW | PERF_SAMPLE_TIME | PERF_SAMPLE_IDENTIFIER;
-        // TODO: remove EventFormat stuff from here, do both
-        attr_.config = tracepoint::EventFormat("raw_syscalls:sys_enter").id();
+        // TODO: remove EventFormat stuff from here, do both enter & exit
         // attr_.config = tracepoint::EventFormat("raw_syscalls:sys_exit").id();
+        attr_.config = tracepoint::EventFormat("raw_syscalls:sys_enter").id();
         break;
     }
     }
 }
 
-PerfEventInstance PerfEvent::open()
+PerfEvent::PerfEvent(EventType type, bool enable_on_exec, std::optional<EventDescription> desc,
+                     std::optional<int> event_id)
+: type_(type)
 {
-    return PerfEventInstance(type_, *this);
+    // set data_storage
+    if (type_ == EventType::GROUP || type_ == EventType::USERSPACE || type_ == EventType::SAMPLING)
+    {
+        assert(desc.has_value());
+        data_storage_ = desc.value();
+    }
+
+    // configure Perf_event_attr
+    setup(enable_on_exec, (event_id.has_value()) ? event_id : std::nullopt);
+}
+
+PerfEvent::PerfEvent()
+{
+    memset(&attr_, 0, sizeof(attr_));
+    attr_.size = sizeof(attr_);
+    attr_.type = -1;
+}
+
+// returns opened PerfEvent instance
+PerfEventInstance PerfEvent::open(std::variant<Cpu, Thread> location)
+{
+    return PerfEventInstance(type_, *this, location);
 };
 
-PerfEventInstance::PerfEventInstance(EventType type, PerfEvent ev) : type_(type), ev_(ev)
+PerfEventInstance::PerfEventInstance(){};
+
+PerfEventInstance::PerfEventInstance(EventType type, PerfEvent ev,
+                                     std::variant<Cpu, Thread> location)
+: type_(type), ev_(ev)
 {
+    // can be deleted when scope gets replaced
+    ExecutionScope scope;
+    std::visit(overloaded{ [&](Cpu cpu) { scope = cpu.as_scope(); },
+                           [&](Thread thread) { scope = thread.as_scope(); } },
+               location);
+
     if (type_ == EventType::TIME)
     {
-        fd_ = perf_event_open(&ev_.get_attr(), ev_.get_scope(), -1, 0);
+        fd_ = perf_event_open(&ev_.get_attr(), scope, -1, 0);
+
         if (fd_ == -1)
         {
             throw;
         }
     }
-    else
+    else if (type_ == EventType::USERSPACE || type_ == EventType::GROUP)
     {
-        fd_ = perf_event_open(&ev_.get_attr(), ev_.get_scope(), -1, 0, config().cgroup_fd);
-
-        // error handling
+        fd_ = perf_try_event_open(&ev_.get_attr(), scope, -1, 0, config().cgroup_fd);
 
         if (type_ == EventType::GROUP)
         {
             if (fd_ < 0)
             {
                 Log::error() << "perf_event_open for counter group leader failed";
-                throw; // TODO: do some template stuff so throw__errno() works
+                throw_errno();
             }
         }
-        else if (type_ == EventType::SYSCALL || type_ == EventType::TRACEPOINT)
+        if (type_ == EventType::USERSPACE)
+        {
+            if (fd_ < 0)
+            {
+                Log::error() << "perf_event_open for counter failed";
+                throw_errno();
+            }
+        }
+    }
+    else
+    {
+        fd_ = perf_event_open(&ev_.get_attr(), scope, -1, 0, config().cgroup_fd);
+
+        if (type_ == EventType::SYSCALL || type_ == EventType::TRACEPOINT)
         {
 
             if (fd_ < 0)
             {
                 Log::error() << "perf_event_open for raw tracepoint failed.";
-                throw;
+                throw_errno();
             }
         }
-        else if (type_ == EventType::USERSPACE)
-        {
-            if (fd_ < 0)
-            {
-                Log::error() << "perf_event_open for counter failed";
-                throw;
-            }
-        }
+
         else if (type_ == EventType::SAMPLING)
         {
             if (errno == EACCES && !ev_.get_attr().exclude_kernel && perf_event_paranoid() > 1)

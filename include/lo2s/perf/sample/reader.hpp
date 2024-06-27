@@ -85,12 +85,21 @@ protected:
         Log::debug() << "initializing event_reader for:" << scope.name()
                      << ", enable_on_exec: " << enable_on_exec;
 
-        counter::group::PerfEvent event(counter::group::EventType::SAMPLING, scope, enable_on_exec,
-                                        std::nullopt);
+        counter::group::PerfEvent event(counter::group::EventType::SAMPLING, enable_on_exec,
+                                        std::nullopt, std::nullopt);
 
         do
         {
-            counter::group::PerfEventInstance ev_instance = event.open();
+            counter::group::PerfEventInstance ev_instance;
+            if (scope.is_cpu())
+            {
+                ev_instance = event.open(scope.as_cpu());
+            }
+            else
+            {
+                ev_instance = event.open(scope.as_thread());
+            }
+            fd_ = ev_instance.get_fd();
 
             /* reduce exactness of IP can help if the kernel does not support really exact events */
             if (event.get_attr().precise_ip == 0)

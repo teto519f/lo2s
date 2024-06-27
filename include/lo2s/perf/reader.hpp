@@ -26,6 +26,7 @@
 #include <variant>
 
 #include <lo2s/config.hpp>
+#include <lo2s/error.hpp>
 #include <lo2s/perf/counter/counter_provider.hpp>
 #include <lo2s/perf/event_provider.hpp>
 #include <lo2s/perf/tracepoint/format.hpp>
@@ -79,30 +80,18 @@ protected:
     EventDescription data_storage_;
     double scale_ = 1.0;
 
-    std::variant<Cpu, Thread> location_;
-    ExecutionScope scope_;
+    void setup(bool enable_on_exec, std::optional<int> event_id);
 
 public:
+    PerfEvent(EventType type, bool enable_on_exec, std::optional<EventDescription> desc,
+              std::optional<int> event_id);
     PerfEvent();
 
-    PerfEvent(EventType type, std::variant<Cpu, Thread> location, bool enable_on_exec,
-              std::optional<int> event_id);
-
-    PerfEventInstance open();
+    PerfEventInstance open(std::variant<Cpu, Thread> location);
 
     double get_scale() const
     {
         return scale_;
-    }
-
-    std::variant<Cpu, Thread> get_location() const
-    {
-        return location_;
-    }
-
-    ExecutionScope get_scope() const
-    {
-        return scope_;
     }
 
     perf_event_attr& get_attr()
@@ -119,13 +108,18 @@ class PerfEventInstance
 {
 protected:
     int fd_;
-    int other_fd_;
     EventType type_;
     PerfEvent ev_;
 
 public:
+    PerfEventInstance();
     PerfEventInstance(PerfEventInstance&) = delete;
-    PerfEventInstance(EventType type, PerfEvent ev);
+    PerfEventInstance(EventType type, PerfEvent ev, std::variant<Cpu, Thread> location);
+
+    int get_fd() const
+    {
+        return fd_;
+    };
 
     template <class T>
     T read()

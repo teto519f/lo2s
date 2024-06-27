@@ -21,6 +21,7 @@
 
 #include <lo2s/perf/counter/group/reader.hpp>
 #include <lo2s/perf/counter/group/writer.hpp>
+#include <lo2s/perf/reader.hpp>
 
 #include <lo2s/build_config.hpp>
 #include <lo2s/config.hpp>
@@ -28,8 +29,6 @@
 #include <lo2s/perf/event_description.hpp>
 #include <lo2s/perf/event_provider.hpp>
 #include <lo2s/perf/util.hpp>
-
-#include <lo2s/perf/reader.hpp>
 
 #include <cstring>
 
@@ -55,8 +54,19 @@ Reader<T>::Reader(ExecutionScope scope, bool enable_on_exec)
       CounterProvider::instance().collection_for(MeasurementScope::group_metric(scope))),
   counter_buffer_(counter_collection_.counters.size() + 1)
 {
-    PerfEvent event(EventType::GROUP, scope, enable_on_exec, std::nullopt);
-    PerfEventInstance ev_instance = event.open();
+    PerfEvent leader_event(EventType::GROUP, enable_on_exec, counter_collection_.leader,
+                           std::nullopt);
+    PerfEventInstance ev_instance_leader;
+
+    if (scope.is_cpu())
+    {
+        ev_instance_leader = leader_event.open(scope.as_cpu());
+    }
+    else
+    {
+        ev_instance_leader = leader_event.open(scope.as_thread());
+    }
+    group_leader_fd_ = ev_instance_leader.get_fd();
 
     Log::debug() << "counter::Reader: leader event: '" << counter_collection_.leader.name << "'";
 
@@ -67,8 +77,19 @@ Reader<T>::Reader(ExecutionScope scope, bool enable_on_exec)
         {
             try
             {
-                counter_fds_.emplace_back(
-                    perf_event_description_open(scope, description, group_leader_fd_));
+                PerfEvent counter_ev(EventType::GROUP, enable_on_exec, description, std::nullopt);
+                PerfEventInstance counter_ev_inst;
+
+                if (scope.is_cpu())
+                {
+                    counter_ev_inst = counter_ev.open(scope.as_cpu());
+                }
+                else
+                {
+                    counter_ev_inst = counter_ev.open(scope.as_thread());
+                }
+
+                counter_fds_.emplace_back(counter_ev_inst.get_fd());
             }
             catch (const std::system_error& e)
             {

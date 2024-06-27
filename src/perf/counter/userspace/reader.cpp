@@ -22,6 +22,7 @@
 #include <lo2s/error.hpp>
 #include <lo2s/perf/counter/userspace/reader.hpp>
 #include <lo2s/perf/counter/userspace/writer.hpp>
+#include <lo2s/perf/reader.hpp>
 #include <lo2s/time/time.hpp>
 
 #include <lo2s/measurement_scope.hpp>
@@ -65,7 +66,19 @@ Reader<T>::Reader(ExecutionScope scope)
 
     for (auto& event : counter_collection_.counters)
     {
-        counter_fds_.emplace_back(perf_event_description_open(scope, event, -1));
+        group::PerfEvent ev(group::EventType::USERSPACE, 0, event, std::nullopt);
+        group::PerfEventInstance ev_instance;
+
+        if (scope.is_cpu())
+        {
+            ev_instance = ev.open(scope.as_cpu());
+        }
+        else
+        {
+            ev_instance = ev.open(scope.as_thread());
+        }
+
+        counter_fds_.emplace_back(ev_instance.get_fd());
     }
 }
 
