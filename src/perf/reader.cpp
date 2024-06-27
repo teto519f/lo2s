@@ -184,7 +184,7 @@ PerfEvent::PerfEvent(EventType type, bool enable_on_exec, std::optional<EventDes
                      std::optional<int> event_id)
 : type_(type)
 {
-    // set data_storage
+    // set data_storage, other EventTypes don't have/need one
     if (type_ == EventType::GROUP || type_ == EventType::USERSPACE || type_ == EventType::SAMPLING)
     {
         assert(desc.has_value());

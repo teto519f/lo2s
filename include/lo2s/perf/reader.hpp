@@ -104,6 +104,10 @@ public:
     }
 };
 
+/**
+ * Contains an opened instance of PerfEvent.
+ * Use PerfEvent.open() to construct an object
+ */
 class PerfEventInstance
 {
 protected:
