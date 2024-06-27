@@ -71,9 +71,15 @@ public:
     {
         counter::group::PerfEvent event(counter::group::EventType::SYSCALL, 0, std::nullopt,
                                         std::nullopt);
-        // TODO produce two PerfEventInstance objects
-        counter::group::PerfEventInstance ev_instance = event.open(cpu_);
-        fd_ = ev_instance.get_fd();
+        // instance with tracepoint::EventFormat enter (default)
+        counter::group::PerfEventInstance ev_instance_enter = event.open(cpu_);
+
+        // instance with tracepoint::EventFormat exit
+        event.get_attr().config = tracepoint::EventFormat("raw_syscalls:sys_exit").id();
+        counter::group::PerfEventInstance ev_instance_exit = event.open(cpu_);
+
+        fd_ = ev_instance_enter.get_fd();
+        other_fd_ = ev_instance_exit.get_fd();
 
         try
         {

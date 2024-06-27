@@ -174,8 +174,6 @@ void PerfEvent::setup(bool enable_on_exec, std::optional<int> event_id)
     {
         attr_.type = PERF_TYPE_TRACEPOINT;
         attr_.sample_type = PERF_SAMPLE_RAW | PERF_SAMPLE_TIME | PERF_SAMPLE_IDENTIFIER;
-        // TODO: remove EventFormat stuff from here, do both enter & exit
-        // attr_.config = tracepoint::EventFormat("raw_syscalls:sys_exit").id();
         attr_.config = tracepoint::EventFormat("raw_syscalls:sys_enter").id();
         break;
     }
