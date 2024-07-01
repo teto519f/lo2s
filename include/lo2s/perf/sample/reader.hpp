@@ -86,67 +86,64 @@ protected:
                      << ", enable_on_exec: " << enable_on_exec;
 
         counter::group::PerfEvent event(counter::group::EventType::SAMPLING, enable_on_exec,
-                                        std::nullopt, std::nullopt);
+                                        EventProvider::get_event_by_name(config().sampling_event),
+                                        std::nullopt);
 
         do
         {
-            counter::group::PerfEventInstance ev_instance;
-            if (scope.is_cpu())
+            try
             {
-                ev_instance = event.open(scope.as_cpu());
+                if (scope.is_cpu())
+                {
+                    ev_instance_ = event.open(scope.as_cpu());
+                }
+                else
+                {
+                    Log::debug() << "trying to open with precise_ip "
+                                 << event.get_attr().precise_ip;
+                    ev_instance_ = event.open(scope.as_thread());
+                }
             }
-            else
+            catch (std::system_error& e)
             {
-                ev_instance = event.open(scope.as_thread());
-            }
-            fd_ = ev_instance.get_fd();
+                if (e.code().value() == EACCES && !event.get_attr().exclude_kernel &&
+                    perf_event_paranoid() > 1)
+                {
+                    event.get_attr().exclude_kernel = 1;
+                    perf_warn_paranoid();
+                    continue;
+                }
 
-            /* reduce exactness of IP can help if the kernel does not support really exact events */
-            if (event.get_attr().precise_ip == 0)
-                break;
-            else
-                event.get_attr().precise_ip--;
-        } while (fd_ <= 0);
+                Log::debug() << "fd: " << ev_instance_.get_fd();
+                if (!event.degrade_percision())
+                {
+                    Log::error() << "perf_event_open for sampling failed: " << e.what();
 
-        // error handling here because it would break the loop if it were to happen in the
-        // PerfEventInstance class
-        if (fd_ < 0)
-        {
-            Log::error() << "perf_event_open for sampling failed";
-            if (event.get_attr().use_clockid)
-            {
-                Log::error() << "maybe the specified clock is unavailable?";
+                    if (event.get_attr().use_clockid)
+                    {
+                        Log::error() << "maybe the specified clock is unavailable?";
+                    }
+                    throw_errno();
+                }
             }
-            throw_errno();
-        }
+        } while (!ev_instance_.is_valid());
+
         Log::debug() << "Using precise_ip level: " << event.get_attr().precise_ip;
+        Log::debug() << "fd now: " << ev_instance_.get_fd();
 
         // Exception safe, so much wow!
         try
         {
-            // asynchronous delivery
-            // if (fcntl(fd, F_SETFL, O_ASYNC | O_NONBLOCK))
-            if (fcntl(fd_, F_SETFL, O_NONBLOCK))
-            {
-                throw_errno();
-            }
-
-            init_mmap(fd_);
+            init_mmap(ev_instance_.get_fd());
             Log::debug() << "mmap initialized";
 
             if (!enable_on_exec)
             {
-                auto ret = ioctl(fd_, PERF_EVENT_IOC_ENABLE);
-                Log::debug() << "ioctl(fd, PERF_EVENT_IOC_ENABLE) = " << ret;
-                if (ret == -1)
-                {
-                    throw_errno();
-                }
+                ev_instance_.enable();
             }
         }
         catch (...)
         {
-            close();
             throw;
         }
     }
@@ -169,24 +166,13 @@ protected:
                            "extend to prevent the kernel from doing that"
                            " or you can increase your sampling period.";
         }
-        close();
-    }
-
-public:
-    void close()
-    {
-        if (fd_ != -1)
-        {
-            ::close(fd_);
-            fd_ = -1;
-        }
     }
 
 protected:
     bool has_cct_;
 
 private:
-    int fd_ = -1;
+    counter::group::PerfEventInstance ev_instance_;
 };
 } // namespace sample
 } // namespace perf

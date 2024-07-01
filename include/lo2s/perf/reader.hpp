@@ -75,12 +75,10 @@ class PerfEventInstance;
 class PerfEvent
 {
 protected:
-    struct perf_event_attr attr_ = common_perf_event_attrs();
+    struct perf_event_attr attr_;
     EventType type_;
     EventDescription data_storage_;
     double scale_ = 1.0;
-
-    void setup(bool enable_on_exec, std::optional<int> event_id);
 
 public:
     PerfEvent(EventType type, bool enable_on_exec, std::optional<EventDescription> desc,
@@ -88,6 +86,10 @@ public:
     PerfEvent();
 
     PerfEventInstance open(std::variant<Cpu, Thread> location);
+
+    bool degrade_percision();
+
+    void set_bp_addr(uint64_t local_time);
 
     double get_scale() const
     {
@@ -117,24 +119,50 @@ protected:
 
 public:
     PerfEventInstance();
+    PerfEventInstance(const EventType& type, PerfEvent& ev, std::variant<Cpu, Thread> location);
+
     PerfEventInstance(PerfEventInstance&) = delete;
-    PerfEventInstance(EventType type, PerfEvent ev, std::variant<Cpu, Thread> location);
+    PerfEventInstance& operator=(const PerfEventInstance&) = delete;
+
+    PerfEventInstance(PerfEventInstance&& other)
+    {
+        std::swap(fd_, other.fd_);
+        std::swap(ev_, other.ev_);
+    }
+
+    PerfEventInstance& operator=(PerfEventInstance&& other)
+    {
+        std::swap(fd_, other.fd_);
+        std::swap(ev_, other.ev_);
+        return *this;
+    }
+
+    void enable();
+    void disable();
+
+    void set_output(const PerfEventInstance& other_ev);
+    void set_syscall_filter();
 
     int get_fd() const
     {
         return fd_;
+    }
+
+    bool is_valid() const
+    {
+        return fd_ >= 0;
     };
 
     template <class T>
     T read()
     {
-        uint64_t val;
-        if (::read(fd_, &val, sizeof(val)) != sizeof(uint64_t))
+        T val;
+        if (::read(fd_, &val, sizeof(val)) != sizeof(T))
         {
             throw std::system_error(errno, std::system_category());
         }
 
-        return (static_cast<T>(val)) * ev_.get_scale();
+        return val;
     }
 
     ~PerfEventInstance()

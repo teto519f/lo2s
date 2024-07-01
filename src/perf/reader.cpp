@@ -25,6 +25,7 @@
 
 extern "C"
 {
+#include <fcntl.h>
 #include <sys/ioctl.h>
 }
 
@@ -46,14 +47,32 @@ struct overloaded : Ts...
 template <class... Ts>
 overloaded(Ts...) -> overloaded<Ts...>;
 
-// configures perf_event_attr based on desc
-void PerfEvent::setup(bool enable_on_exec, std::optional<int> event_id)
+void PerfEvent::set_bp_addr(uint64_t addr)
 {
-    // if data_storage_ wasn't set it will contain the following values if not specified otherwise
-    // later on:
-    attr_.type = data_storage_.type;       //-1
-    attr_.config = data_storage_.config;   // 0
-    attr_.config1 = data_storage_.config1; // 0
+    attr_.bp_addr = addr;
+}
+
+PerfEvent::PerfEvent(EventType type, bool enable_on_exec, std::optional<EventDescription> desc,
+                     std::optional<int> event_id)
+: type_(type)
+{
+    memset(&attr_, 0, sizeof(attr_));
+    attr_.size = sizeof(attr_);
+    attr_.type = -1;
+
+    attr_ = common_perf_event_attrs();
+
+    // set data_storage, other EventTypes don't have/need one
+    if (type_ == EventType::GROUP || type_ == EventType::USERSPACE || type_ == EventType::SAMPLING)
+    {
+        assert(desc.has_value());
+        data_storage_ = desc.value();
+
+        // if data_storage_ isnt't set, these will be set later on
+        attr_.type = data_storage_.type;
+        attr_.config = data_storage_.config;
+        attr_.config1 = data_storage_.config1;
+    }
 
     attr_.exclude_kernel = config().exclude_kernel;
     attr_.sample_period = 1;
@@ -79,7 +98,6 @@ void PerfEvent::setup(bool enable_on_exec, std::optional<int> event_id)
     case EventType::GROUP:
     {
         attr_.sample_type = PERF_SAMPLE_TIME | PERF_SAMPLE_READ;
-        attr_.freq = config().metric_use_frequency;
 
         // TODO: check if comments will/should appear multiple times
         if (attr_.freq)
@@ -97,17 +115,16 @@ void PerfEvent::setup(bool enable_on_exec, std::optional<int> event_id)
             PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING | PERF_FORMAT_GROUP;
 
         break;
+    }
 
     case EventType::TIME:
-        otf2::chrono::time_point local_time = otf2::chrono::genesis();
-
+    {
         attr_.sample_type = PERF_SAMPLE_TIME;
         attr_.exclude_kernel = 1;
 
 #ifndef USE_HW_BREAKPOINT_COMPAT
         attr_.type = PERF_TYPE_BREAKPOINT;
         attr_.bp_type = HW_BREAKPOINT_W;
-        attr_.bp_addr = (uint64_t)(&local_time);
         attr_.bp_len = HW_BREAKPOINT_LEN_8;
         attr_.wakeup_events = 1;
 #else
@@ -121,12 +138,14 @@ void PerfEvent::setup(bool enable_on_exec, std::optional<int> event_id)
 
     case EventType::SAMPLING:
     {
+        attr_.use_clockid = config().use_clockid;
+        attr_.clockid = config().clockid;
+
         if (config().use_pebs)
         {
             attr_.use_clockid = 0;
         }
-
-        attr_.sample_period = config().sampling_period; // update
+        attr_.sample_period = config().sampling_period;
 
         if (config().sampling)
         {
@@ -180,26 +199,27 @@ void PerfEvent::setup(bool enable_on_exec, std::optional<int> event_id)
     }
 }
 
-PerfEvent::PerfEvent(EventType type, bool enable_on_exec, std::optional<EventDescription> desc,
-                     std::optional<int> event_id)
-: type_(type)
-{
-    // set data_storage, other EventTypes don't have/need one
-    if (type_ == EventType::GROUP || type_ == EventType::USERSPACE || type_ == EventType::SAMPLING)
-    {
-        assert(desc.has_value());
-        data_storage_ = desc.value();
-    }
-
-    // configure Perf_event_attr
-    setup(enable_on_exec, (event_id.has_value()) ? event_id : std::nullopt);
-}
-
 PerfEvent::PerfEvent()
 {
     memset(&attr_, 0, sizeof(attr_));
     attr_.size = sizeof(attr_);
     attr_.type = -1;
+
+    attr_ = common_perf_event_attrs();
+}
+
+bool PerfEvent::degrade_percision()
+{
+    /* reduce exactness of IP can help if the kernel does not support really exact events */
+    if (attr_.precise_ip == 0)
+    {
+        return false;
+    }
+    else
+    {
+        attr_.precise_ip--;
+        return true;
+    }
 }
 
 // returns opened PerfEvent instance
@@ -208,72 +228,83 @@ PerfEventInstance PerfEvent::open(std::variant<Cpu, Thread> location)
     return PerfEventInstance(type_, *this, location);
 };
 
-PerfEventInstance::PerfEventInstance(){};
+PerfEventInstance::PerfEventInstance() : fd_(-2){};
 
-PerfEventInstance::PerfEventInstance(EventType type, PerfEvent ev,
+PerfEventInstance::PerfEventInstance(const EventType& type, PerfEvent& ev,
                                      std::variant<Cpu, Thread> location)
 : type_(type), ev_(ev)
 {
+
     // can be deleted when scope gets replaced
     ExecutionScope scope;
     std::visit(overloaded{ [&](Cpu cpu) { scope = cpu.as_scope(); },
                            [&](Thread thread) { scope = thread.as_scope(); } },
                location);
 
+    // open events
     if (type_ == EventType::TIME)
     {
         fd_ = perf_event_open(&ev_.get_attr(), scope, -1, 0);
-
-        if (fd_ == -1)
-        {
-            throw;
-        }
     }
     else if (type_ == EventType::USERSPACE || type_ == EventType::GROUP)
     {
         fd_ = perf_try_event_open(&ev_.get_attr(), scope, -1, 0, config().cgroup_fd);
-
-        if (type_ == EventType::GROUP)
-        {
-            if (fd_ < 0)
-            {
-                Log::error() << "perf_event_open for counter group leader failed";
-                throw_errno();
-            }
-        }
-        if (type_ == EventType::USERSPACE)
-        {
-            if (fd_ < 0)
-            {
-                Log::error() << "perf_event_open for counter failed";
-                throw_errno();
-            }
-        }
     }
     else
     {
         fd_ = perf_event_open(&ev_.get_attr(), scope, -1, 0, config().cgroup_fd);
+    }
 
-        if (type_ == EventType::SYSCALL || type_ == EventType::TRACEPOINT)
-        {
+    // error handling
+    if (fd_ < 0)
+    {
+        throw_errno();
+    }
 
-            if (fd_ < 0)
-            {
-                Log::error() << "perf_event_open for raw tracepoint failed.";
-                throw_errno();
-            }
-        }
+    if (fcntl(fd_, F_SETFL, O_NONBLOCK))
+    {
+        Log::error() << errno;
+        throw_errno();
+    }
+}
 
-        else if (type_ == EventType::SAMPLING)
-        {
-            if (errno == EACCES && !ev_.get_attr().exclude_kernel && perf_event_paranoid() > 1)
-            {
-                ev_.get_attr().exclude_kernel = 1;
-                perf_warn_paranoid();
-            }
-            // since this will most likely be called from a while-loop, the error handling can't
-            // happen here
-        }
+void PerfEventInstance::enable()
+{
+    auto ret = ioctl(fd_, PERF_EVENT_IOC_ENABLE);
+    if (ret == -1)
+    {
+        throw_errno();
+    }
+}
+
+void PerfEventInstance::disable()
+{
+    auto ret = ioctl(fd_, PERF_EVENT_IOC_DISABLE);
+    if (ret == -1)
+    {
+        throw_errno();
+    }
+}
+
+void PerfEventInstance::set_output(const PerfEventInstance& other_ev)
+{
+    if (ioctl(fd_, PERF_EVENT_IOC_SET_OUTPUT, other_ev.get_fd()) == -1)
+    {
+        throw_errno();
+    }
+}
+
+void PerfEventInstance::set_syscall_filter()
+{
+    std::vector<std::string> names;
+    std::transform(config().syscall_filter.cbegin(), config().syscall_filter.end(),
+                   std::back_inserter(names),
+                   [](const auto& elem) { return fmt::format("id == {}", elem); });
+    std::string filter = fmt::format("{}", fmt::join(names, "||"));
+
+    if (ioctl(fd_, PERF_EVENT_IOC_SET_FILTER, filter.c_str()) == -1)
+    {
+        throw_errno();
     }
 }
 
