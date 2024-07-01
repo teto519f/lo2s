@@ -76,7 +76,6 @@ PerfEvent::PerfEvent(EventType type, bool enable_on_exec, std::optional<EventDes
 
     attr_.exclude_kernel = config().exclude_kernel;
     attr_.sample_period = 1;
-    attr_.freq = config().metric_use_frequency;
     attr_.enable_on_exec = enable_on_exec;
 
     // Event type specific attributes
@@ -87,17 +86,13 @@ PerfEvent::PerfEvent(EventType type, bool enable_on_exec, std::optional<EventDes
         attr_.sample_period = 0;
         // Needed when scaling multiplexed events, and recognize activation phases
         attr_.read_format = PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING;
-
-#ifndef USE_HW_BREAKPOINT_COMPAT
-        attr_.use_clockid = config().use_clockid;
-        attr_.clockid = config().clockid;
-#endif
         break;
     }
 
     case EventType::GROUP:
     {
         attr_.sample_type = PERF_SAMPLE_TIME | PERF_SAMPLE_READ;
+        attr_.freq = config().metric_use_frequency;
 
         // TODO: check if comments will/should appear multiple times
         if (attr_.freq)
@@ -127,6 +122,7 @@ PerfEvent::PerfEvent(EventType type, bool enable_on_exec, std::optional<EventDes
         attr_.bp_type = HW_BREAKPOINT_W;
         attr_.bp_len = HW_BREAKPOINT_LEN_8;
         attr_.wakeup_events = 1;
+        // set attr_.addr through set_bp_addr(localtime) externally
 #else
         attr_.type = PERF_TYPE_HARDWARE;
         attr_.config = PERF_COUNT_HW_INSTRUCTIONS;
@@ -138,13 +134,11 @@ PerfEvent::PerfEvent(EventType type, bool enable_on_exec, std::optional<EventDes
 
     case EventType::SAMPLING:
     {
-        attr_.use_clockid = config().use_clockid;
-        attr_.clockid = config().clockid;
-
         if (config().use_pebs)
         {
             attr_.use_clockid = 0;
         }
+
         attr_.sample_period = config().sampling_period;
 
         if (config().sampling)
@@ -204,8 +198,6 @@ PerfEvent::PerfEvent()
     memset(&attr_, 0, sizeof(attr_));
     attr_.size = sizeof(attr_);
     attr_.type = -1;
-
-    attr_ = common_perf_event_attrs();
 }
 
 bool PerfEvent::degrade_percision()
@@ -241,7 +233,7 @@ PerfEventInstance::PerfEventInstance(const EventType& type, PerfEvent& ev,
                            [&](Thread thread) { scope = thread.as_scope(); } },
                location);
 
-    // open events
+    // open event
     if (type_ == EventType::TIME)
     {
         fd_ = perf_event_open(&ev_.get_attr(), scope, -1, 0);
