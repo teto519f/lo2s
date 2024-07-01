@@ -56,21 +56,18 @@ Reader<T>::Reader(ExecutionScope scope, bool enable_on_exec)
 {
     PerfEvent leader_event(EventType::GROUP, enable_on_exec, counter_collection_.leader,
                            std::nullopt);
-    PerfEventInstance ev_instance_leader;
 
     if (scope.is_cpu())
     {
-        ev_instance_leader = leader_event.open(scope.as_cpu());
+        counter_leader_ = leader_event.open(scope.as_cpu());
     }
     else
     {
-        ev_instance_leader = leader_event.open(scope.as_thread());
+        counter_leader_ = leader_event.open(scope.as_thread());
     }
-    group_leader_fd_ = ev_instance_leader.get_fd();
 
     Log::debug() << "counter::Reader: leader event: '" << counter_collection_.leader.name << "'";
 
-    counter_fds_.reserve(counter_collection_.counters.size());
     for (auto& description : counter_collection_.counters)
     {
         if (description.is_supported_in(scope))
@@ -78,18 +75,15 @@ Reader<T>::Reader(ExecutionScope scope, bool enable_on_exec)
             try
             {
                 PerfEvent counter_ev(EventType::GROUP, enable_on_exec, description, std::nullopt);
-                PerfEventInstance counter_ev_inst;
 
                 if (scope.is_cpu())
                 {
-                    counter_ev_inst = counter_ev.open(scope.as_cpu());
+                    counters_.emplace_back(counter_ev.open(scope.as_cpu()));
                 }
                 else
                 {
-                    counter_ev_inst = counter_ev.open(scope.as_thread());
+                    counters_.emplace_back(counter_ev.open(scope.as_thread()));
                 }
-
-                counter_fds_.emplace_back(counter_ev_inst.get_fd());
             }
             catch (const std::system_error& e)
             {
@@ -110,15 +104,9 @@ Reader<T>::Reader(ExecutionScope scope, bool enable_on_exec)
 
     if (!enable_on_exec)
     {
-        auto ret = ::ioctl(group_leader_fd_, PERF_EVENT_IOC_ENABLE);
-        if (ret == -1)
-        {
-            Log::error() << "failed to enable perf counter group";
-            ::close(group_leader_fd_);
-            throw_errno();
-        }
+        counter_leader_.enable();
     }
-    EventReader<T>::init_mmap(group_leader_fd_);
+    EventReader<T>::init_mmap(counter_leader_.get_fd());
 }
 template class Reader<Writer>;
 } // namespace group

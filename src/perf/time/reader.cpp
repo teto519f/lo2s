@@ -58,17 +58,14 @@ Reader::Reader()
                                            "object, or the hardware breakpoint won't work.");
 
     counter::group::PerfEvent event(counter::group::EventType::TIME, 0, std::nullopt, std::nullopt);
+    event.set_bp_addr((uint64_t)&local_time);
 
     try
     {
-        counter::group::PerfEventInstance ev_instance = event.open(Thread(0));
-        fd_ = ev_instance.get_fd();
+        ev_instance_ = event.open(Thread(0));
 
-        init_mmap(fd_);
-        if (ioctl(fd_, PERF_EVENT_IOC_ENABLE) == -1)
-        {
-            throw_errno();
-        }
+        init_mmap(ev_instance_.get_fd());
+        ev_instance_.enable();
     }
     catch (...)
     {
@@ -79,7 +76,6 @@ Reader::Reader()
         Log::error()
             << "opening the perf event for HW_BREAKPOINT_COMPAT time synchronization failed";
 #endif
-        close(fd_);
         throw;
     }
 
@@ -91,7 +87,6 @@ Reader::Reader()
     }
     else if (pid == -1)
     {
-        close(fd_);
         throw_errno();
     }
     waitpid(pid, NULL, 0);
@@ -104,11 +99,6 @@ bool Reader::handle(const RecordSyncType* sync_event)
     Log::trace() << "time_reader::handle called";
     perf_time = convert_time_point(sync_event->time);
     return true;
-}
-
-Reader::~Reader()
-{
-    close(fd_);
 }
 
 } // namespace time

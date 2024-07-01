@@ -117,34 +117,20 @@ public:
     {
         counter::group::PerfEvent event(counter::group::EventType::TRACEPOINT, 0, std::nullopt,
                                         event_id);
-        counter::group::PerfEventInstance ev_instance = event.open(cpu_);
-        fd_ = ev_instance.get_fd();
+        ev_instance_ = event.open(cpu_);
 
         Log::debug() << "Opened perf_sample_tracepoint_reader for " << cpu_ << " with id "
                      << event_id;
 
         try
         {
-            // asynchronous delivery
-            // if (fcntl(fd, F_SETFL, O_ASYNC | O_NONBLOCK))
-            if (fcntl(fd_, F_SETFL, O_NONBLOCK))
-            {
-                throw_errno();
-            }
-
-            init_mmap(fd_);
+            init_mmap(ev_instance_.get_fd());
             Log::debug() << "perf_tracepoint_reader mmap initialized";
 
-            auto ret = ioctl(fd_, PERF_EVENT_IOC_ENABLE);
-            Log::debug() << "perf_tracepoint_reader ioctl(fd, PERF_EVENT_IOC_ENABLE) = " << ret;
-            if (ret == -1)
-            {
-                throw_errno();
-            }
+            ev_instance_.enable();
         }
         catch (...)
         {
-            close(fd_);
             throw;
         }
     }
@@ -152,25 +138,12 @@ public:
     Reader(Reader&& other)
     : EventReader<T>(std::forward<perf::EventReader<T>>(other)), cpu_(other.cpu_)
     {
-        std::swap(fd_, other.fd_);
-    }
-
-    ~Reader()
-    {
-        if (fd_ != -1)
-        {
-            close(fd_);
-        }
+        std::swap(ev_instance_, other.ev_instance_);
     }
 
     void stop()
     {
-        auto ret = ioctl(fd_, PERF_EVENT_IOC_DISABLE);
-        Log::debug() << "perf_tracepoint_reader ioctl(fd, PERF_EVENT_IOC_DISABLE) = " << ret;
-        if (ret == -1)
-        {
-            throw_errno();
-        }
+        ev_instance_.disable();
         this->read();
     }
 
@@ -179,7 +152,7 @@ protected:
 
 private:
     Cpu cpu_;
-    int fd_ = -1;
+    counter::group::PerfEventInstance ev_instance_;
     const static std::filesystem::path base_path;
 };
 

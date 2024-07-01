@@ -24,6 +24,7 @@
 #include <lo2s/execution_scope.hpp>
 #include <lo2s/perf/counter/counter_collection.hpp>
 #include <lo2s/perf/counter/userspace/userspace_counter_buffer.hpp>
+#include <lo2s/perf/reader.hpp>
 #include <lo2s/trace/trace.hpp>
 
 #include <cstdint>
@@ -55,10 +56,11 @@ public:
     }
 
 protected:
-    std::vector<int> counter_fds_;
+    group::PerfEventInstance ev_instance_;
+    std::vector<group::PerfEventInstance> counters_;
+    int timer_fd_;
     CounterCollection counter_collection_;
     UserspaceCounterBuffer counter_buffer_;
-    int timer_fd_;
 
     std::vector<UserspaceReadFormat> data_;
 };

@@ -67,30 +67,24 @@ Reader<T>::Reader(ExecutionScope scope)
     for (auto& event : counter_collection_.counters)
     {
         group::PerfEvent ev(group::EventType::USERSPACE, 0, event, std::nullopt);
-        group::PerfEventInstance ev_instance;
 
         if (scope.is_cpu())
         {
-            ev_instance = ev.open(scope.as_cpu());
+            counters_.emplace_back(ev.open(scope.as_cpu()));
         }
         else
         {
-            ev_instance = ev.open(scope.as_thread());
+            counters_.emplace_back(ev.open(scope.as_thread()));
         }
-
-        counter_fds_.emplace_back(ev_instance.get_fd());
     }
 }
 
 template <class T>
 void Reader<T>::read()
 {
-    for (std::size_t i = 0; i < counter_fds_.size(); i++)
+    for (std::size_t i = 0; i < counters_.size(); i++)
     {
-        [[maybe_unused]] auto bytes_read =
-            ::read(counter_fds_[i], &(data_[i]), sizeof(UserspaceReadFormat));
-
-        assert(bytes_read == sizeof(UserspaceReadFormat));
+        data_[i] = counters_[i].read<UserspaceReadFormat>();
     }
 
     static_cast<T*>(this)->handle(data_);
